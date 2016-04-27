@@ -363,6 +363,74 @@ func resourceServiceV1() *schema.Resource {
 					},
 				},
 			},
+
+                        "request_setting": &schema.Schema{
+                                Type:     schema.TypeSet,
+                                Optional: true,
+                                Elem: &schema.Resource{
+                                        Schema: map[string]*schema.Schema{
+                                                // Required fields
+                                                "name": &schema.Schema{
+                                                        Type:        schema.TypeString,
+                                                        Required:    true,
+                                                        Description: "Unique name to refer to this Request Setting",
+                                                },
+                                                // Optional fields
+                                                "max_stale_age": &schema.Schema{
+                                                        Type:        schema.TypeInt,
+                                                        Optional:    true,
+                                                        Default:     60,
+                                                        Description: "How old an object is allowed to be, in seconds. Default `60`",
+                                                },
+                                                "force_miss": &schema.Schema{
+                                                        Type:        schema.TypeBool,
+                                                        Optional:    true,
+                                                        Description: "Force a cache miss for the request",
+                                                },
+                                                "force_ssl": &schema.Schema{
+                                                        Type:        schema.TypeBool,
+                                                        Optional:    true,
+                                                        Description: "Forces the request use SSL",
+                                                },
+                                                "action": &schema.Schema{
+                                                        Type:        schema.TypeString,
+                                                        Optional:    true,
+                                                        Description: "Allows you to terminate request handling and immediately perform an action",
+                                                },
+                                                "bypass_busy_wait": &schema.Schema{
+                                                        Type:        schema.TypeBool,
+                                                        Optional:    true,
+                                                        Description: "Disable collapsed forwarding",
+                                                },
+                                                "hash_keys": &schema.Schema{
+                                                        Type:        schema.TypeString,
+                                                        Optional:    true,
+                                                        Description: "Comma separated list of varnish request object fields that should be in the hash key",
+                                                },
+                                                "xff": &schema.Schema{
+                                                        Type:        schema.TypeString,
+                                                        Optional:    true,
+                                                        Default:     "append",
+                                                        Description: "X-Forwarded-For options",
+                                                },
+                                                "timer_support": &schema.Schema{
+                                                        Type:        schema.TypeBool,
+                                                        Optional:    true,
+                                                        Description: "Injects the X-Timer info into the request",
+                                                },
+                                                "geo_headers": &schema.Schema{
+                                                        Type:        schema.TypeBool,
+                                                        Optional:    true,
+                                                        Description: "Inject Fastly-Geo-Country, Fastly-Geo-City, and Fastly-Geo-Region",
+                                                },
+                                                "default_host": &schema.Schema{
+                                                        Type:        schema.TypeString,
+                                                        Optional:    true,
+                                                        Description: "the host header",
+                                                },
+                                        },
+                                },
+                        },
 		},
 	}
 }
@@ -947,6 +1015,23 @@ func resourceServiceV1Read(d *schema.ResourceData, meta interface{}) error {
 			log.Printf("[WARN] Error setting S3 Logging for (%s): %s", d.Id(), err)
 		}
 
+                // refresh Request Settings
+                log.Printf("[DEBUG] Refreshing Request Settings for (%s)", d.Id())
+                rsList, err := conn.ListRequestSettings(&gofastly.ListRequestSettingsInput{
+                        Service: d.Id(),
+                        Version: s.ActiveVersion.Number,
+                })
+
+                if err != nil {
+                        return fmt.Errorf("[ERR] Error looking up Request Settings for (%s), version (%s): %s", d.Id(), s.ActiveVersion.Number, err)
+                }
+
+                rl := flattenRequestSettings(rsList)
+
+                if err := d.Set("request_setting", rl); err != nil {
+                        log.Printf("[WARN] Error setting Request Settings for (%s): %s", d.Id(), err)
+                }
+
 	} else {
 		log.Printf("[DEBUG] Active Version for Service (%s) is empty, no state to refresh", d.Id())
 	}
@@ -1214,4 +1299,35 @@ func flattenS3s(s3List []*gofastly.S3) []map[string]interface{} {
 	}
 
 	return sl
+}
+
+func flattenRequestSettings(rsList []*gofastly.RequestSetting) []map[string]interface{} {
+        var rl []map[string]interface{}
+        for _, r := range rsList {
+                // Convert Request Settings to a map for saving to state.
+                nrs := map[string]interface{}{
+                        "name":             r.Name,
+                        "max_stale_age":    r.MaxStaleAge,
+                        "force_miss":       r.ForceMiss,
+                        "force_ssl":        r.ForceSSL,
+                        "action":           r.Action,
+                        "bypass_busy_wait": r.BypassBusyWait,
+                        "hash_keys":        r.HashKeys,
+                        "xff":              r.XForwardedFor,
+                        "timer_support":    r.TimerSupport,
+                        "geo_headers":      r.GeoHeaders,
+                        "default_host":     r.DefaultHost,
+                }
+
+                // prune any empty values that come from the default string value in structs
+                for k, v := range nrs {
+                        if v == "" {
+                                delete(nrs, k)
+                        }
+                }
+
+                rl = append(rl, nrs)
+        }
+
+        return rl
 }
