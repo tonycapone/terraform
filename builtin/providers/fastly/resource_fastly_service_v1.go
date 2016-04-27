@@ -477,6 +477,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 		"header",
 		"gzip",
 		"s3logging",
+                "request_setting",
 	} {
 		if d.HasChange(v) {
 			needsChange = true
@@ -561,7 +562,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 					Name:    df["name"].(string),
 				}
 
-				log.Printf("[DEBUG] Fastly Domain Removal opts: %#v", opts)
+                                log.Printf("[DEBUG] Fastly Domain removal opts: %#v", opts)
 				err := conn.DeleteDomain(&opts)
 				if err != nil {
 					return err
@@ -619,7 +620,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 					Name:    bf["name"].(string),
 				}
 
-				log.Printf("[DEBUG] Fastly Backend Removal opts: %#v", opts)
+                                log.Printf("[DEBUG] Fastly Backend removal opts: %#v", opts)
 				err := conn.DeleteBackend(&opts)
 				if err != nil {
 					return err
@@ -681,7 +682,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 					Name:    df["name"].(string),
 				}
 
-				log.Printf("[DEBUG] Fastly Header Removal opts: %#v", opts)
+                                log.Printf("[DEBUG] Fastly Header removal opts: %#v", opts)
 				err := conn.DeleteHeader(&opts)
 				if err != nil {
 					return err
@@ -736,7 +737,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 					Name:    df["name"].(string),
 				}
 
-				log.Printf("[DEBUG] Fastly Gzip Removal opts: %#v", opts)
+                                log.Printf("[DEBUG] Fastly Gzip removal opts: %#v", opts)
 				err := conn.DeleteGzip(&opts)
 				if err != nil {
 					return err
@@ -810,7 +811,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 					Name:    sf["name"].(string),
 				}
 
-				log.Printf("[DEBUG] Fastly S3 Logging Removal opts: %#v", opts)
+                                log.Printf("[DEBUG] Fastly S3 Logging removal opts: %#v", opts)
 				err := conn.DeleteS3(&opts)
 				if err != nil {
 					return err
@@ -851,6 +852,61 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 				}
 			}
 		}
+
+                // find difference in request settings
+                if d.HasChange("request_setting") {
+                        // POST new Logging
+                        // Note: we don't utilize the PUT endpoint to update a Request Settings, we simply
+                        // destroy it and create a new one. This is how Terraform works with nested
+                        // sub resources, we only get the full diff not a partial set item diff.
+                        // Because this is done on a new version of the configuration, this is
+                        // considered safe
+                        os, ns := d.GetChange("request_setting")
+                        if os == nil {
+                                os = new(schema.Set)
+                        }
+                        if ns == nil {
+                                ns = new(schema.Set)
+                        }
+
+                        ors := os.(*schema.Set)
+                        nrs := ns.(*schema.Set)
+                        removeRequestSettings := ors.Difference(nrs).List()
+                        addRequestSettings := nrs.Difference(ors).List()
+
+                        // DELETE old S3 Log configurations
+                        for _, sRaw := range removeRequestSettings {
+                                sf := sRaw.(map[string]interface{})
+                                opts := gofastly.DeleteRequestSettingInput{
+                                        Service: d.Id(),
+                                        Version: latestVersion,
+                                        Name:    sf["name"].(string),
+                                }
+
+                                log.Printf("[DEBUG] Fastly Request Setting removal opts: %#v", opts)
+                                err := conn.DeleteRequestSetting(&opts)
+                                if err != nil {
+                                        return err
+                                }
+                        }
+
+                        // POST new/updated Request Setting
+                        for _, sRaw := range addRequestSettings {
+                                opts, err := buildRequestSetting(sRaw.(map[string]interface{}))
+                                if err != nil {
+                                        log.Printf("[DEBUG] Error building Requset Setting: %s", err)
+                                        return err
+                                }
+                                opts.Service = d.Id()
+                                opts.Version = latestVersion
+
+                                log.Printf("[DEBUG] Create Request Setting Opts: %#v", opts)
+                                _, err = conn.CreateRequestSetting(opts)
+                                if err != nil {
+                                        return err
+                                }
+                        }
+                }
 
 		// validate version
 		log.Printf("[DEBUG] Validating Fastly Service (%s), Version (%s)", d.Id(), latestVersion)
@@ -1330,4 +1386,43 @@ func flattenRequestSettings(rsList []*gofastly.RequestSetting) []map[string]inte
         }
 
         return rl
+}
+
+func buildRequestSetting(requestSettingMap interface{}) (*gofastly.CreateRequestSettingInput, error) {
+        df := requestSettingMap.(map[string]interface{})
+        opts := gofastly.CreateRequestSettingInput{
+                Name:           df["name"].(string),
+                MaxStaleAge:    uint(df["max_stale_age"].(int)),
+                ForceMiss:      gofastly.Compatibool(df["force_miss"].(bool)),
+                ForceSSL:       gofastly.Compatibool(df["force_ssl"].(bool)),
+                BypassBusyWait: gofastly.Compatibool(df["bypass_busy_wait"].(bool)),
+                HashKeys:       df["hash_keys"].(string),
+                TimerSupport:   gofastly.Compatibool(df["timer_support"].(bool)),
+                GeoHeaders:     gofastly.Compatibool(df["geo_headers"].(bool)),
+                DefaultHost:    df["default_host"].(string),
+        }
+
+        act := strings.ToLower(df["action"].(string))
+        switch act {
+        case "lookup":
+                opts.Action = gofastly.RequestSettingActionLookup
+        case "pass":
+                opts.Action = gofastly.RequestSettingActionPass
+        }
+
+        xff := strings.ToLower(df["xff"].(string))
+        switch xff {
+        case "clear":
+                opts.XForwardedFor = gofastly.RequestSettingXFFClear
+        case "leave":
+                opts.XForwardedFor = gofastly.RequestSettingXFFLeave
+        case "append":
+                opts.XForwardedFor = gofastly.RequestSettingXFFAppend
+        case "append_all":
+                opts.XForwardedFor = gofastly.RequestSettingXFFAppendAll
+        case "overwrite":
+                opts.XForwardedFor = gofastly.RequestSettingXFFOverwrite
+        }
+
+        return &opts, nil
 }

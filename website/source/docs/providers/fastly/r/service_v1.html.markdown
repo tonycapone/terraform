@@ -210,6 +210,9 @@ compressed. Default `0`
 * `format` - (Optional) Apache-style string or VCL variables to use for log formatting. Default
 Apache Common Log format (`%h %l %u %t %r %>s`)
 * `timestamp_format` - (Optional) `strftime` specified timestamp formatting (default `%Y-%m-%dT%H:%M:%S.000`).
+* `request_condition` - (Optional) The VCL request condition to check if this
+Request Setting should be applied. For detailed information about Conditionals,
+see [Fastly's Documentation on Conditionals][fastly-conditionals]
 
 
 ## Attributes Reference
@@ -230,3 +233,4 @@ The following attributes are exported:
 
 [fastly-s3]: https://docs.fastly.com/guides/integrations/amazon-s3
 [fastly-cname]: https://docs.fastly.com/guides/basic-setup/adding-cname-records
+[fastly-conditionals]: https://docs.fastly.com/guides/conditions/using-conditions
