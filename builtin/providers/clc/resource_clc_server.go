@@ -46,7 +46,9 @@ func resourceCLCServer() *schema.Resource {
 			},
 			"password": &schema.Schema{
 				Type:     schema.TypeString,
-				Required: true,
+				Optional: true,
+				Computed: true,
+				Default:  nil,
 			},
 			// optional
 			"description": &schema.Schema{
@@ -183,6 +185,8 @@ func resourceCLCServerRead(d *schema.ResourceData, meta interface{}) error {
 			d.Set("public_ip_address", s.Details.IPaddresses[0].Public)
 		}
 	}
+	p, err := client.Server.GetCredentials(d.Id())
+	d.Set("password", p.Password)
 
 	d.Set("name", s.Name)
 	d.Set("groupId", s.GroupID)
@@ -195,6 +199,7 @@ func resourceCLCServerRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("storage_type", s.Storagetype)
 	d.Set("created_date", s.ChangeInfo.CreatedDate)
 	d.Set("modified_date", s.ChangeInfo.ModifiedDate)
+
 	return nil
 }
 
